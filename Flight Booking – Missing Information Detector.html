@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flight Booking – Missing Information Detector</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f7f9;--card:#fff;--ink:#14181f;--mute:#5d6675;--line:#dfe3ea;--acc:#1d5fd1;--accink:#fff;--ok:#12794a;--okbg:#e4f5ec;--miss:#b4361b;--missbg:#fdeae5;--code:#f0f2f6}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1218;--card:#181c25;--ink:#e8ebf1;--mute:#98a1b2;--line:#2b3140;--acc:#6ea0ff;--accink:#0b1220;--ok:#5fd59a;--okbg:#13291f;--miss:#ff8f73;--missbg:#321a14;--code:#10141b}}
+:root[data-theme="dark"]{--bg:#0f1218;--card:#181c25;--ink:#e8ebf1;--mute:#98a1b2;--line:#2b3140;--acc:#6ea0ff;--accink:#0b1220;--ok:#5fd59a;--okbg:#13291f;--miss:#ff8f73;--missbg:#321a14;--code:#10141b}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.5rem;margin:0 0 4px}
+.sub{color:var(--mute);margin:0 0 20px}
+.grid{display:grid;gap:16px;grid-template-columns:1fr 1fr}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+h2{font-size:1rem;margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+textarea{width:100%;min-height:90px;resize:vertical;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:7px 12px}
+button.primary{background:var(--acc);color:var(--accink);border-color:var(--acc);font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.chip{font-size:.82rem;padding:5px 10px;color:var(--mute)}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;background:var(--code);padding:12px;border-radius:8px;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:420px;overflow:auto}
+table{width:100%;border-collapse:collapse;margin-bottom:12px}
+td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+td:first-child{color:var(--mute);width:48%}
+.tag{display:inline-block;padding:1px 9px;border-radius:99px;font-size:.85rem;font-weight:600}
+.ok{background:var(--okbg);color:var(--ok)}
+.miss{background:var(--missbg);color:var(--miss)}
+.done{background:var(--okbg);color:var(--ok);padding:12px;border-radius:8px;font-weight:600}
+ol{margin:6px 0 0;padding-left:22px}
+.hint{color:var(--mute);font-size:.85rem;margin-top:8px}
+.log{margin-top:8px;font-size:.85rem;color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+<h1>✈️ Flight Booking – Missing Information Detector</h1>
+<p class="sub">Paste a customer message. The system extracts what was stated, flags every missing mandatory field, and asks only for what is missing.</p>
+
+<div class="grid">
+  <section class="card">
+    <h2>Customer message</h2>
+    <textarea id="msg" placeholder="e.g. I am Rahul. I want to book a flight from Bengaluru to Delhi."></textarea>
+    <div class="row">
+      <button class="primary" id="run">Check booking details</button>
+      <button id="reset">Reset conversation</button>
+    </div>
+    <div class="row" id="samples"></div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section class="card" aria-live="polite">
+    <h2>Result <button id="copyOut" class="chip">Copy</button></h2>
+    <div id="result"><p class="hint">Submit a message to see the result.</p></div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <h2><button id="togglePrompt" aria-expanded="false" aria-controls="prompt">▶ Prompt</button> <button id="copyPrompt" class="chip" hidden>Copy prompt</button></h2>
+  <pre id="prompt" hidden></pre>
+</section>
+</main>
+
+<script>
+const FIELDS=[
+ {k:'name',label:'Passenger Name',q:'What is the passenger’s name?'},
+ {k:'dep',label:'Departure City',q:'Which city will you be departing from?'},
+ {k:'dest',label:'Destination City',q:'Which city are you travelling to?'},
+ {k:'date',label:'Travel Date',q:'What is your preferred travel date?'},
+ {k:'pax',label:'Number of Passengers',q:'How many passengers will be travelling?'},
+ {k:'cls',label:'Travel Class',q:'Which travel class do you prefer: Economy, Premium Economy, Business, or First Class?'}
+];
+const PROMPT=`You are an intelligent data-collection assistant for a flight booking system.
+
+TASK
+Read the customer's message(s) and check whether all mandatory booking information has been provided.
+
+MANDATORY FIELDS
+1. Passenger Name
+2. Departure City
+3. Destination City
+4. Travel Date
+5. Number of Passengers
+6. Travel Class (Economy, Premium Economy, Business, First Class)
+
+RULES
+1. Extract every field the customer explicitly states.
+2. Never assume, infer, or invent a missing value. If a field is not stated, mark it "Missing".
+3. Identify every missing mandatory field – do not skip any.
+4. Ask one clear, relevant question for each missing field, and only for those.
+5. Never ask the customer to repeat information already provided.
+6. If all six fields are provided, respond only with: All required information has been provided.
+7. Combine details across the whole conversation; a later reply fills earlier gaps.
+
+OUTPUT FORMAT
+Passenger Name: <value or Missing>
+Departure City: <value or Missing>
+Destination City: <value or Missing>
+Travel Date: <value or Missing>
+Number of Passengers: <value or Missing>
+Travel Class: <value or Missing>
+
+Please provide the following missing information:
+1. <question for first missing field>
+2. <question for next missing field>
+...
+
+EXAMPLE
+Input: "I am Rahul. I want to book a flight from Bengaluru to Delhi."
+Output:
+Passenger Name: Rahul
+Departure City: Bengaluru
+Destination City: Delhi
+Travel Date: Missing
+Number of Passengers: Missing
+Travel Class: Missing
+
+Please provide the following missing information:
+1. What is your preferred travel date?
+2. How many passengers will be travelling?
+3. Which travel class do you prefer: Economy, Premium Economy, Business, or First Class?
+
+CUSTOMER MESSAGE:
+{{customer_message}}`;
+
+const MONTHS='jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+const NUMW={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+const STOP='(?=[.,;!?]|\\s+(?:on|for|in|with|by|next|tomorrow|today|at|and|around|during|leaving|departing|economy|business|premium|first)\\b|$)';
+const tc=s=>s.trim().replace(/\s+/g,' ').split(' ').map(w=>w[0].toUpperCase()+w.slice(1).toLowerCase()).join(' ');
+
+function extract(t){
+  const o={};let m;
+  if((m=t.match(/(?:\b[Ii] am|\b[Ii]['’]m|\b[Mm]y name is|\b[Tt]his is|\b[Pp]assenger(?: name)?\s*[:\-]|\b[Nn]ame\s*[:\-]|\b[Nn]ame is)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+){0,2})/)))o.name=m[1];
+  const cityRe=new RegExp('from\\s+([A-Za-z][A-Za-z .]*?)\\s+to\\s+([A-Za-z][A-Za-z .]*?)'+STOP,'i');
+  if((m=t.match(cityRe))){o.dep=tc(m[1]);o.dest=tc(m[2]);}
+  else{
+    let d=t.match(new RegExp('(?:depart(?:ing)?|leav(?:e|ing)|starting|flying|fly|flight)\\s+from\\s+([A-Za-z][A-Za-z ]*?)'+STOP,'i'));
+    if(d)o.dep=tc(d[1]);
+    let e=t.match(new RegExp('(?:going|travel(?:l)?ing|flying|fly|trip|flight|ticket|book(?:ing)?)(?:\\s+\\w+){0,3}?\\s+to\\s+([A-Za-z][A-Za-z ]*?)'+STOP,'i'));
+    if(e)o.dest=tc(e[1]);
+  }
+  const dr=[/\b(\d{4}-\d{2}-\d{2})\b/,/\b(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})\b/,
+   new RegExp('\\b(\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:'+MONTHS+')\\b(?:,?\\s+\\d{4})?)','i'),
+   new RegExp('\\b((?:'+MONTHS+')\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?\\b(?:,?\\s+\\d{4})?)','i'),
+   /\b(day after tomorrow|tomorrow|today|tonight|next (?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this (?:weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i];
+  for(const r of dr){if((m=t.match(r))){o.date=m[1];break;}}
+  const nw=Object.keys(NUMW).join('|');
+  if((m=t.match(new RegExp('\\b(\\d{1,2}|'+nw+')\\s+(?:passengers?|people|persons?|adults?|travell?ers?|tickets?|seats?|pax)\\b','i')))||
+     (m=t.match(new RegExp('\\bfor\\s+(\\d{1,2}|'+nw+')\\b(?!\\s*(?:day|night|week|hour|month))','i')))||
+     (m=t.match(new RegExp('^\\s*(\\d{1,2})\\s*$|,\\s*(\\d{1,2})\\s*,','i')))){
+    const v=(m[1]||m[2]||'').toLowerCase();o.pax=NUMW[v]||v;
+  }
+  if(/premium\s*economy/i.test(t))o.cls='Premium Economy';
+  else if(/\beconomy\b/i.test(t))o.cls='Economy';
+  else if(/\bbusiness\b/i.test(t))o.cls='Business';
+  else if(/\bfirst[\s-]*class\b|\bfirst\b(?=\s*(?:,|\.|$))/i.test(t))o.cls='First Class';
+  return o;
+}
+
+let state={};
+function run(){
+  const t=document.getElementById('msg').value;
+  if(!t.trim())return;
+  const found=extract(t);
+  const added=Object.keys(found);
+  Object.assign(state,found);
+  render(added);
+  document.getElementById('msg').value='';
+}
+function lines(){
+  const missing=FIELDS.filter(f=>!state[f.k]);
+  if(!missing.length)return {text:'All required information has been provided.',missing};
+  let s=FIELDS.map(f=>f.label+': '+(state[f.k]||'Missing')).join('\n');
+  s+='\n\nPlease provide the following missing information:\n'+missing.map((f,i)=>(i+1)+'. '+f.q).join('\n');
+  return {text:s,missing};
+}
+function render(added){
+  const {text,missing}=lines();
+  const box=document.getElementById('result');box.textContent='';
+  const tb=document.createElement('table');
+  FIELDS.forEach(f=>{
+    const tr=tb.insertRow(),a=tr.insertCell(),b=tr.insertCell();
+    a.textContent=f.label;
+    const sp=document.createElement('span');
+    if(state[f.k]){sp.className='tag ok';sp.textContent=state[f.k];}
+    else{sp.className='tag miss';sp.textContent='Missing';}
+    b.appendChild(sp);
+  });
+  box.appendChild(tb);
+  if(!missing.length){
+    const d=document.createElement('div');d.className='done';d.textContent='All required information has been provided.';box.appendChild(d);
+  }else{
+    const p=document.createElement('strong');p.textContent='Please provide the following missing information:';box.appendChild(p);
+    const ol=document.createElement('ol');
+    missing.forEach(f=>{const li=document.createElement('li');li.textContent=f.q;ol.appendChild(li);});
+    box.appendChild(ol);
+  }
+  box.dataset.out=text;
+  const lg=document.getElementById('log');
+  lg.textContent=added&&added.length?'Extracted from this message: '+added.map(k=>FIELDS.find(f=>f.k===k).label).join(', ')+'.':'No new details found in this message.';
+}
+async function copy(txt,btn){
+  try{await navigator.clipboard.writeText(txt);}catch(e){
+    const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}ta.remove();}
+  const o=btn.textContent;btn.textContent='Copied ✓';setTimeout(()=>btn.textContent=o,1200);
+}
+document.getElementById('prompt').textContent=PROMPT;
+document.getElementById('run').onclick=run;
+document.getElementById('msg').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))run();});
+document.getElementById('reset').onclick=()=>{state={};document.getElementById('result').innerHTML='<p class="hint">Submit a message to see the result.</p>';document.getElementById('result').dataset.out='';document.getElementById('log').textContent='';};
+document.getElementById('copyPrompt').onclick=e=>copy(PROMPT,e.target);
+document.getElementById('togglePrompt').onclick=e=>{
+  const p=document.getElementById('prompt'),c=document.getElementById('copyPrompt');
+  const open=p.hidden;p.hidden=!open;c.hidden=!open;
+  e.target.setAttribute('aria-expanded',String(open));
+  e.target.textContent=(open?'▼':'▶')+' Prompt';
+};
+document.getElementById('copyOut').onclick=e=>copy(document.getElementById('result').dataset.out||'',e.target);
+[['Rahul, Bengaluru → Delhi','I am Rahul. I want to book a flight from Bengaluru to Delhi.'],
+ ['Follow-up reply','15 March 2027, 2 passengers, Business class'],
+ ['Everything provided','My name is Priya Sharma. Please book 3 passengers from Mumbai to Chennai on 2027-01-20 in Economy class.'],
+ ['Nothing useful','I want to book a flight.']].forEach(([l,v])=>{
+  const b=document.createElement('button');b.className='chip';b.textContent=l;
+  b.onclick=()=>{document.getElementById('msg').value=v;};
+  document.getElementById('samples').appendChild(b);
+});
+</script>
+</body>
+</html>
